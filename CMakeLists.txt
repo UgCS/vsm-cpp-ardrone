@@ -1,6 +1,6 @@
 cmake_minimum_required (VERSION 2.6)
 
-project(vsm-cpp-ardrone)
+project(vsm-ardrone)
 
 # Deal with path to SDK
 if (NOT DEFINED VSM_SDK_DIR)
@@ -8,20 +8,25 @@ if (NOT DEFINED VSM_SDK_DIR)
         set(VSM_SDK_DIR $ENV{VSM_SDK_DIR})
     else()
         # Default SDK path
-        if(CMAKE_SYSTEM_NAME MATCHES "Windows")
-            set(VSM_SDK_DIR "C:/Program Files/vsm_sdk")
-        else()
-            set(VSM_SDK_DIR "/opt/vsm_sdk")
+        if(WIN32)
+            set(VSM_SDK_DIR "C:/UGCS/vsm-sdk")
+        elseif(APPLE)
+            set(VSM_SDK_DIR "/Applications/UgCS/vsm-sdk")
+        elseif(UNIX)
+            set(VSM_SDK_DIR "/opt/ugcs/vsm-sdk")
         endif()
     endif()
 endif()
 
-include("${VSM_SDK_DIR}/lib/make/vsm.cmake")
+set(UGCS_PACKAGE_SUMMARY "UgCS vehicle specific module (VSM) for Ar.Drone")
+set(UGCS_VSM_USER_GUIDE_LATEX_TITLE "Parrot AR.Drone VSM User Guide")
+set(CMAKE_MODULE_PATH "${VSM_SDK_DIR}/share/cmake")
+include("ugcs/vsm")
 
 Build_vsm_config(${CMAKE_SOURCE_DIR}/vsm.conf)
 
 if (NOT DEFINED COMMON_SOURCES)
-    set(COMMON_SOURCES "../vsm-cpp-common")
+    set(COMMON_SOURCES "../common")
 endif()
 
 include_directories (include "${COMMON_SOURCES}/include")
@@ -29,8 +34,11 @@ include_directories (include "${COMMON_SOURCES}/include")
 file(GLOB SOURCES "src/*.cpp" "${COMMON_SOURCES}/src/*mavlink*.cpp") 
 
 # Add the executable
-add_executable(${CMAKE_PROJECT_NAME} ${SOURCES})
+add_executable(${VSM_EXECUTABLE_NAME} ${SOURCES})
 
-target_link_libraries(${CMAKE_PROJECT_NAME} ${VSM_LIBS})
+target_link_libraries(${VSM_EXECUTABLE_NAME} ${VSM_LIBS})
 
 Add_install_target()
+
+#Add package target.
+include(CPack)

@@ -4,9 +4,9 @@
 
 #include <iostream>
 #include <signal.h>
-#include <vsm/vsm.h>
-#include <vsm/callback.h>
-#include <vsm/run_as_service.h>
+#include <ugcs/vsm/vsm.h>
+#include <ugcs/vsm/callback.h>
+#include <ugcs/vsm/run_as_service.h>
 #include <ardrone_vehicle_manager.h>
 
 #ifdef __unix__
@@ -29,7 +29,7 @@ Ardrone_vehicle_manager::Ptr manager;
 int
 start_main(int argc, char *argv[])
 {
-    vsm::Initialize(argc, argv);
+    ugcs::vsm::Initialize(argc, argv, "vsm-ardrone.conf");
     manager = Ardrone_vehicle_manager::Create();
     manager->Enable();
 
@@ -41,7 +41,7 @@ stop_main()
 {
     manager->Disable();
     manager = nullptr;
-    vsm::Terminate();
+    ugcs::vsm::Terminate();
 }
 
 void
@@ -56,13 +56,15 @@ wait_for_termination()
 int
 main (int argc, char *argv[])
 {
-    if (vsm::Run_as_service(
+    auto ret = ugcs::vsm::Run_as_service(
             "ugcs-vsm-ardrone",
             argc,
             argv,
-            vsm::Make_program_init_handler(start_main),
-            vsm::Make_callback(stop_main)))
-        return 0;
+            ugcs::vsm::Make_program_init_handler(start_main),
+            ugcs::vsm::Make_callback(stop_main));
+    if (ret != ugcs::vsm::SERVICE_RESULT_NORMAL_INVOCATION) {
+        return ret;
+    }
 
 #ifdef __unix__
     struct sigaction action;

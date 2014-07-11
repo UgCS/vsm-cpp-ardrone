@@ -5,17 +5,19 @@
 #include <ardrone_vehicle.h>
 
 /* Ardrone uses only this value in ACK messages. */
-const vsm::Mavlink_demuxer::System_id Mavlink_vehicle::VSM_SYSTEM_ID = 255;
+const ugcs::vsm::Mavlink_demuxer::System_id Mavlink_vehicle::VSM_SYSTEM_ID = 255;
 
 /* Ardrone uses only this value in ACK messages. */
-const vsm::Mavlink_demuxer::Component_id Mavlink_vehicle::VSM_COMPONENT_ID = 0;
+const ugcs::vsm::Mavlink_demuxer::Component_id Mavlink_vehicle::VSM_COMPONENT_ID = 0;
 
-using namespace vsm;
+constexpr std::chrono::milliseconds Ardrone_vehicle::Emergeny_land::RETRY_DELAY;
+
+using namespace ugcs::vsm;
 
 void
 Ardrone_vehicle::Handle_vehicle_request(Vehicle_task_request::Handle request)
 {
-    LOG_INFO("Starting to handle %ld tasks...", request->actions.size());
+    VEHICLE_LOG_INF((*this), "Starting to handle %zu tasks...", request->actions.size());
     ASSERT(!task_upload.request);
     task_upload.Disable();
     clear_all_missions.Disable();
@@ -25,7 +27,7 @@ Ardrone_vehicle::Handle_vehicle_request(Vehicle_task_request::Handle request)
                     &Task_upload::Enable,
                     &task_upload,
                     request));
-    clear_all_missions.Enable(vsm::Clear_all_missions());
+    clear_all_missions.Enable(ugcs::vsm::Clear_all_missions());
 }
 
 void
@@ -41,36 +43,88 @@ void
 Ardrone_vehicle::Handle_vehicle_request(Vehicle_command_request::Handle request)
 {
     ASSERT(!vehicle_command.vehicle_command_request);
-    vehicle_command.Disable();
-    vehicle_command.Enable(request);
+
+    if (request->Get_type() == Vehicle_command::Type::MANUAL_MODE ||
+        request->Get_type() == Vehicle_command::Type::AUTO_MODE) {
+
+        mode_switch.Disable();
+        mode_switch.Enable(request);
+    } else if (request->Get_type() == Vehicle_command::Type::EMERGENCY_LAND) {
+    	emergency_land.Disable();
+    	emergency_land.Enable(request, drone_addr);
+    } else {
+        vehicle_command.Disable();
+        vehicle_command.Enable(request);
+    }
+}
+
+void
+Ardrone_vehicle::Mode_switch::Enable(ugcs::vsm::Vehicle_command_request::Handle request)
+{
+    this->request = request;
+    num_attempts = 0;
+    if (request->Get_type() == Vehicle_command::Type::AUTO_MODE) {
+        target_mode = Sys_status::Control_mode::AUTO;
+    } else {
+        target_mode = Sys_status::Control_mode::MANUAL;
+    }
+    Toggle_mode();
+}
+
+void
+Ardrone_vehicle::Mode_switch::Toggle_mode()
+{
+    if (current_mode == target_mode) {
+        if (request) {
+            request = Vehicle_request::Result::OK;
+        }
+        return;
+    }
+    if (request) {
+        num_attempts++;
+        if (num_attempts > MAX_ATTEMPTS) {
+            request = Vehicle_request::Result::NOK;
+        }
+        /* Still continue requests sending. */
+    }
+    mavlink::Pld_command_long cmd;
+    Fill_target_ids(cmd);
+    cmd->command = mavlink::MAV_CMD::MAV_CMD_OVERRIDE_GOTO;
+    cmd->param1 = mavlink::MAV_GOTO::MAV_GOTO_DO_CONTINUE;
+    Send_message(cmd);
+}
+
+void
+Ardrone_vehicle::Mode_switch::On_disable()
+{
+    if (request) {
+        request = Vehicle_request::Result::NOK;
+    }
 }
 
 bool
 Ardrone_vehicle::Vehicle_command_act::Try()
 {
     if (!remaining_attempts--) {
-        LOG_WARN("Vehicle_command all attempts failed.");
+        /* ArDrone does not send responses, so assume command is executed. */
+    	vehicle_command_request = Vehicle_request::Result::OK;
         Disable();
         return false;
     }
 
     mavlink::Pld_command_long cmd;
     Fill_target_ids(cmd);
-    cmd->param1 = 0;
-    cmd->param2 = 0;
-    cmd->param3 = 0;
-    cmd->param4 = 0;
-    cmd->param5 = 0;
-    cmd->param6 = 0;
-    cmd->param7 = 0;
 
     switch (vehicle_command_request->Get_type()) {
-    case Vehicle_command::Type::HOLD:
+    case Vehicle_command::Type::LAND:
         cmd->command = mavlink::MAV_CMD::MAV_CMD_NAV_LAND;
         break;
-    case Vehicle_command::Type::GO:
+    case Vehicle_command::Type::TAKEOFF:
         cmd->command = mavlink::MAV_CMD::MAV_CMD_NAV_TAKEOFF;
         break;
+    default:
+        Disable();
+        return false;
     }
 
 
@@ -83,7 +137,8 @@ void
 Ardrone_vehicle::Vehicle_command_act::On_command_ack(
         mavlink::Message<mavlink::MESSAGE_ID::COMMAND_ACK>::Ptr message)
 {
-    LOG_INFO("Vehicle command executed, result %d", message->payload->result.Get());
+    VEHICLE_LOG_INF(vehicle, "Vehicle command executed, result %d",
+            message->payload->result.Get());
 
     if (message->payload->result == mavlink::MAV_RESULT::MAV_RESULT_ACCEPTED) {
         vehicle_command_request = Vehicle_request::Result::OK;
@@ -134,6 +189,24 @@ Ardrone_vehicle::Vehicle_command_act::Schedule_timer()
                 vehicle.Get_completion_ctx());
 }
 
+void
+Ardrone_vehicle::Process_heartbeat(
+    ugcs::vsm::mavlink::Message<ugcs::vsm::mavlink::MESSAGE_ID::HEARTBEAT>::Ptr message)
+{
+    int mode = message->payload->base_mode.Get();
+
+    Sys_status::State state =
+        mode & mavlink::MAV_MODE_FLAG_MANUAL_INPUT_ENABLED ?
+        Sys_status::State::ARMED :
+        Sys_status::State::DISARMED;
+    Sys_status::Control_mode control_mode =
+        mode & mavlink::MAV_MODE_FLAG_GUIDED_ENABLED ?
+        Sys_status::Control_mode::AUTO :
+        Sys_status::Control_mode::MANUAL;
+    mode_switch.current_mode = control_mode;
+    Set_system_status(Sys_status(true, true, control_mode, state, std::chrono::seconds(0)));
+    mode_switch.Toggle_mode();
+}
 
 void
 Ardrone_vehicle::Task_upload::Enable(
@@ -141,7 +214,7 @@ Ardrone_vehicle::Task_upload::Enable(
         Vehicle_task_request::Handle request)
 {
     if (!success) {
-        LOG_INFO("Previous activity failed, failing also task upload.");
+        VEHICLE_LOG_INF(vehicle, "Previous activity failed, failing also task upload.");
         request = Vehicle_request::Result::NOK;
         Disable();
         return;
@@ -154,7 +227,7 @@ Ardrone_vehicle::Task_upload::Enable(
             iter++;
             continue;
         default:
-            LOG_INFO("%s action unsupported, ignored.", (*iter)->Get_name().c_str());
+            VEHICLE_LOG_INF(vehicle, "%s action unsupported, ignored.", (*iter)->Get_name().c_str());
             break;
         }
         iter = request->actions.erase(iter);
@@ -162,7 +235,7 @@ Ardrone_vehicle::Task_upload::Enable(
     this->request = request;
 
     if (!Calculate_launch_elevation()) {
-        LOG_ERROR("Unable to calculate launch elevation.");
+        VEHICLE_LOG_ERR(vehicle, "Unable to calculate launch elevation.");
         Disable();
     } else {
         Prepare_task();
@@ -180,7 +253,7 @@ void
 Ardrone_vehicle::Task_upload::Mission_uploaded(bool success)
 {
     if (!success) {
-        LOG_INFO("Mission upload to vehicle failed, failing vehicle request.");
+        VEHICLE_LOG_INF(vehicle, "Mission upload to vehicle failed, failing vehicle request.");
         request = Vehicle_request::Result::NOK;
         Disable();
         return;
@@ -330,7 +403,7 @@ Ardrone_vehicle::Task_upload::Prepare_wait(Action::Ptr& action)
         (*wp)->param1 = wa->wait_time;
         Add_mission_item(wp);
     } else {
-        LOG_WARN("No move action before wait action, ignored.");
+        VEHICLE_LOG_WRN(vehicle, "No move action before wait action, ignored.");
     }
 }
 
@@ -398,7 +471,8 @@ Ardrone_vehicle::Task_upload::Prepare_change_speed(Action::Ptr& action)
     Change_speed_action::Ptr la = action->Get_action<Action::Type::CHANGE_SPEED>();
     mavlink::Pld_mission_item::Ptr mi = mavlink::Pld_mission_item::Create();
     (*mi)->command = mavlink::MAV_CMD::MAV_CMD_DO_CHANGE_SPEED;
-    switch (vehicle.type) {
+    /* XXX Most likely, this switch does not make much sense for ArDrone for now. */
+    switch (vehicle.Get_mav_type()) {
     case mavlink::MAV_TYPE::MAV_TYPE_QUADROTOR:
     case mavlink::MAV_TYPE::MAV_TYPE_HEXAROTOR:
     case mavlink::MAV_TYPE::MAV_TYPE_OCTOROTOR:
@@ -464,7 +538,7 @@ Ardrone_vehicle::Task_upload::Prepare_panorama(Action::Ptr& action)
     Panorama_action::Ptr panorama = action->Get_action<Action::Type::PANORAMA>();
 
     if (!last_move_action) {
-        LOG_WARNING("No previous move action found to generate panorama action, ignored.");
+        VEHICLE_LOG_WRN(vehicle, "No previous move action found to generate panorama action, ignored.");
         return;
     }
     /* Create additional waypoint at the current position with wait to
@@ -501,7 +575,7 @@ Ardrone_vehicle::Task_upload::Prepare_panorama(Action::Ptr& action)
     }
 
     if (!step) {
-        LOG_WARN("Zero step angle, ignoring panorama.");
+        VEHICLE_LOG_WRN(vehicle, "Zero step angle, ignoring panorama.");
         return;
     }
 
@@ -575,7 +649,7 @@ Ardrone_vehicle::Task_upload::Prepare_panorama(Action::Ptr& action)
      */
     auto long_wait = Build_wp_mission_item(last_move_action);
     if (panorama_duration + 5 > 255) {
-        LOG_WARNING("Estimated panorama duration is truncated to 255 seconds.");
+        VEHICLE_LOG_WRN(vehicle, "Estimated panorama duration is truncated to 255 seconds.");
         (*long_wait)->param1 = 255; /* Max possible wait for Ardupilot. */
     } else {
         (*long_wait)->param1 = panorama_duration + 5;
@@ -595,31 +669,88 @@ Ardrone_vehicle::Task_upload::Prepare_panorama(Action::Ptr& action)
 mavlink::Pld_mission_item::Ptr
 Ardrone_vehicle::Task_upload::Build_wp_mission_item(Action::Ptr& action)
 {
-    auto Normalize = [](double value, double min, double max, double zero_val = 0)
-    {
-        if (value == 0 && zero_val != 0) {
-            return zero_val;
-        } else {
-            return std::max(min, std::min(max, value));
-        }
-    };
-
     Move_action::Ptr ma = action->Get_action<Action::Type::MOVE>();
     mavlink::Pld_mission_item::Ptr mi = mavlink::Pld_mission_item::Create();
     (*mi)->command = mavlink::MAV_CMD::MAV_CMD_NAV_WAYPOINT;
     (*mi)->param1 = ma->wait_time * 10;
-    // Set acceptance radius to something reasonable
-    (*mi)->param2 = Normalize(
-            ma->acceptance_radius,
-            ACCEPTANCE_RADIUS_MIN,
-            ACCEPTANCE_RADIUS_MAX,
-            ACCEPTANCE_RADIUS_DEFAULT);
-    if ((*mi)->param2 != ma->acceptance_radius) {
-        LOG("Acceptance radius normalized from %f to %f", ma->acceptance_radius, (*mi)->param2.Get());
+    /* Set acceptance radius to something reasonable. */
+    if (ma->acceptance_radius < ACCEPTANCE_RADIUS_MIN) {
+        (*mi)->param2 = ACCEPTANCE_RADIUS_MIN;
+        VEHICLE_LOG_INF(vehicle, "Acceptance radius normalized from %f to %f",
+                ma->acceptance_radius, (*mi)->param2.Get());
+    } else {
+        (*mi)->param2 = ma->acceptance_radius;
     }
     (*mi)->param3 = ma->loiter_orbit;
     Fill_mavlink_mission_item_coords(*mi, ma->position.Get_geodetic(), ma->heading);
 
     return mi;
+}
+
+void
+Ardrone_vehicle::Emergeny_land::Enable(
+		ugcs::vsm::Vehicle_command_request::Handle request,
+		ugcs::vsm::Socket_address::Ptr drone_addr)
+{
+	this->request = request;
+	attempts_left = RETRIES;
+	current_seq = 1;
+
+	at_addr = Socket_address::Create(drone_addr->Get_name_as_c_str(),
+			std::to_string(AT_PORT));
+
+	Io_result result;
+	Socket_processor::Get_instance()->Bind_udp(
+			Socket_address::Create("0.0.0.0", std::to_string(AT_PORT)),
+				Make_setter(udp_stream, result));
+	if (result != Io_result::OK) {
+		Disable();
+		return;
+	}
+	Send_command();
+	timer = Timer_processor::Get_instance()->Create_timer(
+			RETRY_DELAY,
+			Make_callback(
+					&Ardrone_vehicle::Emergeny_land::Send_command,
+					this),
+					vehicle.Get_completion_ctx());
+}
+
+void
+Ardrone_vehicle::Emergeny_land::On_disable()
+{
+	if (timer) {
+		timer->Cancel();
+		timer = nullptr;
+	}
+	if (request) {
+		request = Vehicle_request::Result::NOK;
+	}
+	udp_stream = nullptr;
+}
+
+bool
+Ardrone_vehicle::Emergeny_land::Send_command()
+{
+	if (!attempts_left--) {
+		request = Vehicle_request::Result::OK;
+		Disable();
+		return false;
+	}
+
+	uint32_t cmd = 1 << 18 | 1 << 20 | 1 << 22 | 1 << 24 | 1 << 28 | 1 << 8 /* Emerg! */;
+
+	Io_result result;
+	udp_stream->Write_to(
+			Io_buffer::Create(
+					std::string("AT*REF=") +
+					std::to_string(current_seq++) +
+					"," +
+					std::to_string(cmd) +
+					"\r"),
+			at_addr,
+			Make_setter(result));
+
+	return true;
 }
 

@@ -1,0 +1,204 @@
+/**
+
+@page vsm_user_guide AR.Drone VSM User Guide
+
+@image latex ugcs-logo.png "" width=3cm
+@image latex main-vsm-logo.png "" width=4cm
+
+
+@section first_time_connecton First time vehicle connection
+
+See @ref vsm_disclaimer.
+
+Only AR.Drone version 2.0 is supported.
+
+Please follow these steps to connect an AR.Drone vehicle to the U[g]CS:
+
+1. AR.Drone should have Flight Recorder installed. See manufacturer manual for
+details as well as official web-site: http://ardrone2.parrot.com/
+
+2. The connection to the drone is based on Wi-Fi network. The drone creates Wi-Fi
+access point (typically named "ardrone2_XXXXXX") to which your PC should connect (the one where VSM is running).
+ @attention Notes on ArDrone WiFi connectivity:
+ - Always ensure you have connected to the ArDrone Wi-Fi access point.
+ - Reconnect to ArDrone manually.
+
+  It is recommended to manually reconnect to ArDrone WiFi network after power-cycling
+ the ArDrone. E.g. after battery change. This is because it can take significant time 
+ until OS reconnects to the WiFi automatically.
+
+ - ArDrone does not support multiple controllers connected to single drone.
+  
+  Please make sure your iPad or iPhone device is disconnected from ArDrone WiFi 
+ and you do not have ArDrone applications running on your iPad or iPhone before 
+ connecting to UgCS.
+ 
+  Please disconnect the computer running UgCS from ArDrone WiFi network before you
+ try to connect your iPad or iPhone to ArDrone WiFi.
+
+
+3. Once the drone is connected it should appear in vehicles list.
+Both Uplink and Downlink connections should be available. Press
+_Edit_ and select corresponding vehicle profile, an image and change the default
+vehicle name and tail number to be convenient for you:
+@image html new-ardrone-vehicle.png "New AR.Drone vehicle"
+@image latex new-ardrone-vehicle.png "New AR.Drone vehicle" width=15cm
+Vehicle profile needs to be assigned to allow mission planning with this vehicle.
+Image needs to be assigned to see vehicle location on the map.
+
+@subsection multiple_drones Multiple drones connection
+
+All AR.Drone vehicles in default configuration use the same IP address, so it is
+not possible to connect multiple AR.Drone vehicles to the same computer without
+doing non-standard vehicle reconfiguration. Community written instructions about
+how to do it exist, but they are not officially supported by AR.Drone
+manufacturer Parrot. The easiest way how to connect multiple AR.Drone vehicles
+to U[g]CS is to connect each vehicle to its own computer with AR.Drone VSM
+running on it:
+
+@image html multiple-ardrones.png "Multiple AR.Drone vehicles connection"
+@image latex multiple-ardrones.png "Multiple AR.Drone vehicles connection" width=15cm
+
+In this case it is necessary to add addresses of all computers to U[g]CS VSM
+configuration:
+
+@image html new-ardrone-vsm.png "Adding AR.Drone VSM"
+@image latex new-ardrone-vsm.png "Adding AR.Drone VSM" width=15cm
+
+AR.Drone vehicles in U[g]CS are identified by a MavLink ID which is also the
+same for all AR.Drone vehicles, thus does not allow to distinguish one vehicle
+from another. To overcome this problem, it is necessary to assign custom serial
+number for connected vehicle on each computer. That is, for example, AR.Drone on
+PC1 will have serial number 1, but AR.Drone on PC2 will have serial number 2:
+
+
+Add these lines to the first VSM:
+
+        vehicle.ardrone.custom.my_drone.system_id = 1
+        vehicle.ardrone.custom.my_drone.model_name = AR.drone 2.0
+        vehicle.ardrone.custom.my_drone.serial_number = 1
+
+And these lines to the second one:
+
+        vehicle.ardrone.custom.my_drone.system_id = 1
+        vehicle.ardrone.custom.my_drone.model_name = AR.drone 2.0
+        vehicle.ardrone.custom.my_drone.serial_number = 2
+
+Of course, you need to make sure that network connection between UCS and
+computers with VSMs exist.
+
+@section mission_execution_specifics Mission execution specifics
+
+Flight plan element / action | Support | Notes
+-----------------------------|---------|---------
+Camera control  |  No        |         |
+Camera trigger  |  No        |         |
+
+Fail-safe settings in mission properties are not supported.
+
+Please carefully check your flight plan for maximum distance from  ground
+station. It is worth not to fly far (maximum 30-50 meters) from a GS because the
+AR.Drone is equipped with a short-range Wi-Fi.
+
+In each route for AR.Drone you should always have landing points. In any flight
+plan a landing point should be near you or starting point. If you
+do not specify a landing point, the AR.Drone will loiter in air until empty
+battery. Landing point ensures that AR.Drone will automatically return and land
+at this point even if connection is lost between the drone and a GS.
+
+It might be necessary to wait several minutes after the AR.Drone is powered on
+in order to have strong GPS signal. It was noticed that the AR.Drone positioning
+quality is very poor if the flight is started instantly after powering on the
+drone.
+
+@section command_execution_specifics Command execution specifics
+Command        | Support  | Notes
+---------------|----------|---------
+ARM            |  No      |  |
+DISARM         |  No      |  |
+AUTOMODE       |  Yes     |  Continue mission execution if previously paused by MANUALMODE.  |
+MANUALMODE     |  Yes     |  Pause mission execution. The drone will loiter at its current position. It is possible to disconnect GS PC and connect by a native application for manual control. |
+RETURNHOME     |  No      |  |
+TAKEOFF        |  Yes     |  Takeoff and start mission execution. |
+LAND           |  Yes     |  |
+EMERGENCYLAND  |  Yes     |  Beware! Drone will fall down immediately. |
+
+@section telemetry_info Telemetry information specifics
+
+Nothing specific.
+
+@section ardrone_video Video link
+
+The AR.Drone has on-board HD camera and broadcasts the video stream via Wi-Fi.
+To watch the video in U[g]CS you should add the video stream on the video
+configuration page. Use this URL:
+
+        tcp://192.168.1.1:5555/
+
+Currently it is supported only for U[g]CS client running on the computer which
+has direct Wi-Fi connection to AR.Drone.
+
+@section config_file_parameters_section Configuration file
+
+Default configuration file of the AR.Drone VSM suits most needs and it is
+generally not necessary to modify it.
+
+Configuration file location:
+
+- <b>On Microsoft Windows:</b>
+
+         C:\Program Files (x86)\UgCS\vsm-ardrone\vsm-ardrone.conf
+
+- <b>On GNU/Linux:</b>
+
+         /etc/opt/ugcs/vsm-ardrone.conf
+         
+- <b>On Apple OS X:</b>
+
+          /Users/[user name]/Library/Application Support/UGCS/configuration/vsm-ardrone.conf
+
+@subsection common_params_section Common parameters
+
+All VSMs share a common set of configuration file parameters described in
+@ref common_config_file_params. AR.Drone VSM configuration file prefix is:
+
+    vehicle.ardrone
+
+@subsection udp_params_vsmspec UDP connection configuration
+
+Mandatory. At least one parameters set should be configured, otherwise VSM will
+not try to connect to the vehicle. See @ref network_connection_parameters
+
+Usually the AR.Drone has IP-address 192.168.1.1 assigned for its on-board
+network interface. The AR.Drone side UDP port is 14551, the VSM side should use
+14550.
+
+- @b Example:
+
+        vehicle.ardrone.detector.1.udp_local_address = 0.0.0.0
+        vehicle.ardrone.detector.1.udp_local_port = 14550
+        vehicle.ardrone.detector.1.udp_address = 192.168.1.1
+        vehicle.ardrone.detector.1.udp_port = 14551
+
+@subsection model_override_params Model name and serial number override
+
+Optional.
+
+- @b Name: vehicle.ardrone.custom.[name].system_id = [system id]
+- @b Name: vehicle.ardrone.custom.[name].model_name = [model name]
+- @b Name: vehicle.ardrone.custom.[name].serial_number = [serial number]
+- @b Description: In U[g]CS each vehicle is identified by a unique combination of
+model name and serial number represented as text strings. By default, Ar.Drone
+vehicles are identified with a model name Ar.Drone and serial number equal with
+the Mavlink system id read from the vehicle. It can be overridden by these
+parameters, where [name] is an arbitrary vehicle name, [system id] is the
+original Mavlink system id which should be overridden, [model name] is a new
+model name to be visible to the U[g]CS, [serial number] is a new serial number to
+be visible to the U[g]CS.
+- @b Example:
+
+        vehicle.ardrone.custom.my_drone.system_id = 2
+        vehicle.ardrone.custom.my_drone.model_name = AR.drone 2.0
+        vehicle.ardrone.custom.my_drone.serial_number = 123456
+
+*/
