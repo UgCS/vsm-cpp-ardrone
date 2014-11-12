@@ -27,14 +27,16 @@ public:
             Args &&... args) :
             Mavlink_vehicle(
                     system_id, component_id, type,
-                    ugcs::vsm::mavlink::MAV_AUTOPILOT::MAV_AUTOPILOT_GENERIC_WAYPOINTS_ONLY,
+                    static_cast<ugcs::vsm::mavlink::MAV_AUTOPILOT>(ugcs::vsm::mavlink::ugcs::MAV_AUTOPILOT_AR_DRONE),
                     capabilities,
                     stream, mission_dump_path, ugcs::vsm::mavlink::MAX_MAVLINK_PACKET_SIZE,
                     std::forward<Args>(args)...),
             vehicle_command(*this),
             task_upload(*this),
             mode_switch(*this),
-            emergency_land(*this),
+            emergency_land(*this, 11, 250),
+            camera_trigger(*this),
+            set_max_altitude(*this, 2, 250),
             drone_addr(drone_addr)
     {}
 
@@ -53,6 +55,9 @@ public:
      */
     virtual void
     Handle_vehicle_request(ugcs::vsm::Vehicle_command_request::Handle request) override;
+
+    size_t
+    Get_next_at_seq();
 
 private:
     /** Data related to vehicle command processing. */
@@ -102,7 +107,7 @@ private:
     class Task_upload: public Activity {
     public:
 
-        using Activity::Activity;
+        Task_upload(Ardrone_vehicle& v);
 
         /** Calls appropriate prepare action based on type. */
         void
@@ -162,13 +167,11 @@ private:
         virtual void
         On_disable() override;
 
-        /** Calculate launch elevation which is assumed to be the first
-         * waypoint.
-         * @return true on success, false if no sufficient data found in
-         * the mission.
+        /* Calculate maximum elevation which is set in vehicle along with
+         * mission upload.
          */
-        bool
-        Calculate_launch_elevation();
+        void
+        Calculate_max_altitude();
 
         /** Prepare the task for uploading to the vehicle. */
         void
@@ -177,6 +180,10 @@ private:
         /** Mission upload handler. */
         void
         Mission_uploaded(bool success);
+
+        /** Mission upload complete handler. */
+        void
+        Max_altitude_set(bool success);
 
         /**
          * Fill coordinates into Mavlink message based on ugcs::vsm::Geodetic_tuple and
@@ -214,12 +221,22 @@ private:
         /** Previous move action, if any. */
         ugcs::vsm::Action::Ptr last_move_action;
 
+        static constexpr float INVALID_ELEVATION = -13000.0;
+
         /** Elevation (ground level) of the vehicle launch position which is
          * assumed to be first waypoint. Used to compensate absolute altitude
          * sent from UCS. It is assumed that vehicle is started 'close enough'
          * to the first waypoint.
          */
-        double launch_elevation = 0;
+        double launch_elevation = INVALID_ELEVATION;
+
+        /** Max elevation of the mission. ArDrone will not fly above this
+         * in any circumstances.
+         */
+        double max_altitude = 0;
+
+        Ardrone_vehicle& ardrone_vehicle;
+
     } task_upload;
 
     /** Control mode switching requests. */
@@ -253,51 +270,81 @@ private:
     } mode_switch;
 
     /** Initiate emergency landing. */
-    class Emergeny_land: public Activity {
+    class At_command: public Activity {
     public:
-    	using Activity::Activity;
+        At_command(Ardrone_vehicle& v, size_t retries = 0, size_t delay_ms = 0);
 
-    	/** Delay for sending emergency land command. */
-    	static constexpr std::chrono::milliseconds RETRY_DELAY =
-    			std::chrono::milliseconds(250);
+        /** Port for AT commands. */
+        static constexpr size_t AT_PORT = 5556;
 
-    	/** How many times to send emergency land command. */
-    	static constexpr size_t RETRIES = 12;
+        /** Enable class and start command execution. */
+        void
+        Enable( ugcs::vsm::Vehicle_command_request::Handle request,
+                ugcs::vsm::Socket_address::Ptr);
 
-    	/** Port for AT commands. */
-    	static constexpr size_t AT_PORT = 5556;
+        /** Disable this class and cancel any existing request. */
+        virtual void
+        On_disable() override;
 
-    	/** Enable class and start command execution. */
-    	void
-    	Enable(ugcs::vsm::Vehicle_command_request::Handle request,
-    			ugcs::vsm::Socket_address::Ptr);
+        bool
+        Send_command();
 
-    	/** Disable this class and cancel any existing request. */
-    	virtual void
-    	On_disable() override;
+        virtual ugcs::vsm::Io_buffer::Ptr
+        Prepare_command();
 
-    	bool
-    	Send_command();
+        /** Current command request. */
+        ugcs::vsm::Vehicle_command_request::Handle request;
 
-    	/** Current command request. */
-    	ugcs::vsm::Vehicle_command_request::Handle request;
+        /** Retry timer. */
+        ugcs::vsm::Timer_processor::Timer::Ptr timer;
 
-    	/** Retry timer. */
-    	ugcs::vsm::Timer_processor::Timer::Ptr timer;
+        /** UDP stream for sending AT commands. */
+        ugcs::vsm::Socket_processor::Stream::Ref udp_stream;
 
-    	/** UDP stream for sending AT commands. */
-    	ugcs::vsm::Socket_processor::Stream::Ref udp_stream;
+        /** How many more times to send the command. */
+        size_t retries;
 
-    	/** How many more times to send the command. */
-    	size_t attempts_left = RETRIES;
+        /** How many times left*/
+        size_t attempts_left;
 
-    	/** Current AT sequence. */
-    	size_t current_seq;
+        std::chrono::milliseconds delay;
 
-    	/** Address for sending AT commands. */
-    	ugcs::vsm::Socket_address::Ptr at_addr;
+        /** Address for sending AT commands. */
+        ugcs::vsm::Socket_address::Ptr at_addr;
 
+        Ardrone_vehicle& ardrone_vehicle;
+    };
+
+    /** Initiate emergency landing. */
+    class Emergeny_land: public At_command {
+    public:
+        using At_command::At_command;
+        virtual ugcs::vsm::Io_buffer::Ptr
+        Prepare_command();
     } emergency_land;
+
+    /** Take picture. */
+    class Camera_trigger: public At_command {
+    public:
+        using At_command::At_command;
+        virtual ugcs::vsm::Io_buffer::Ptr
+        Prepare_command();
+    } camera_trigger;
+
+    /** Take picture. */
+    class Set_max_altitude: public At_command {
+    public:
+        using At_command::At_command;
+        void Set_altitude(double);
+        virtual ugcs::vsm::Io_buffer::Ptr
+        Prepare_command();
+        int altitude = 0;
+    } set_max_altitude;
+
+    /** Current AT sequence.
+     * Initially set to something bigger because vehicle detection involves
+     * sending AT commands. */
+    std::atomic_size_t current_at_seq = { 100 };
 
     /**
      * Minimal waypoint acceptance radius to use.

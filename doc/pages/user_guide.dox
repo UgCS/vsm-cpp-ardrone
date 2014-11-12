@@ -39,8 +39,8 @@ access point (typically named "ardrone2_XXXXXX") to which your PC should connect
 
 3. Once the drone is connected it should appear in vehicles list.
 Both Uplink and Downlink connections should be available. Press
-_Edit_ and select corresponding vehicle profile, an image and change the default
-vehicle name and tail number to be convenient for you:
+_Gain control_ and _Edit_ to select corresponding vehicle profile and change the default
+vehicle name to be convenient for you:
 @image html new-ardrone-vehicle.png "New AR.Drone vehicle"
 @image latex new-ardrone-vehicle.png "New AR.Drone vehicle" width=15cm
 Vehicle profile needs to be assigned to allow mission planning with this vehicle.
@@ -89,12 +89,25 @@ computers with VSMs exist.
 
 @section mission_execution_specifics Mission execution specifics
 
-Flight plan element / action | Support | Notes
------------------------------|---------|---------
-Camera control  |  No        |         |
-Camera trigger  |  No        |         |
+- Fail-safe settings in mission properties are ignored.
 
-Fail-safe settings in mission properties are not supported.
+ArDrone has the following harcoded fail-safe settings:
+Condition           | Behavior | Notes
+--------------------|----------|----------
+On GPS signal loss  | Unknown | Has not been tested. Should be Wait or Land.|
+On WiFi signal loss | Continue mission | |
+On low battery      | Land | |
+
+Mission waypoint actions supported by ArDrone:
+Flight plan element / action | Support | Notes
+-----------------------------|---------|------
+Camera control | No  | |
+Camera trigger | No  | |
+Heading        | No  | |
+Land           | Yes | |
+Panorama       | No  | |
+Takeoff        | Yes | |
+Wait           | Yes | |
 
 Please carefully check your flight plan for maximum distance from  ground
 station. It is worth not to fly far (maximum 30-50 meters) from a GS because the
@@ -111,13 +124,16 @@ in order to have strong GPS signal. It was noticed that the AR.Drone positioning
 quality is very poor if the flight is started instantly after powering on the
 drone.
 
+ArDrone will not accept missions where any waypoint is lower than ground 
+elevation at base location. It is not able to fly below starting point.
+
 @section command_execution_specifics Command execution specifics
 Command        | Support  | Notes
 ---------------|----------|---------
 ARM            |  No      |  |
 DISARM         |  No      |  |
-AUTOMODE       |  Yes     |  Continue mission execution if previously paused by MANUALMODE.  |
-MANUALMODE     |  Yes     |  Pause mission execution. The drone will loiter at its current position. It is possible to disconnect GS PC and connect by a native application for manual control. |
+CONTINUE       |  Yes     |  Continue mission execution if previously paused by HOLD.  |
+HOLD           |  Yes     |  Pause mission execution. The drone will loiter at its current position. It is possible to disconnect GS PC and connect by a native application for manual control. |
 RETURNHOME     |  No      |  |
 TAKEOFF        |  Yes     |  Takeoff and start mission execution. |
 LAND           |  Yes     |  |

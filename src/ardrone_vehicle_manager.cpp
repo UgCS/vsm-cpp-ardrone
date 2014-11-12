@@ -61,17 +61,17 @@ Ardrone_vehicle_manager::Create_mavlink_vehicle(
         std::string model_name,
         bool)
 {
-    Vehicle::Capabilities capa(Vehicle::Capability::TAKEOFF_AVAILABLE,
-                               Vehicle::Capability::LAND_AVAILABLE,
-                               Vehicle::Capability::AUTO_MODE_AVAILABLE,
-                               Vehicle::Capability::MANUAL_MODE_AVAILABLE,
-                               Vehicle::Capability::EMERGENCY_LAND_AVAILABLE);
-
     return Ardrone_vehicle::Create(
             system_id,
             component_id,
             type,
-            capa,
+            Vehicle::Capabilities(
+            Vehicle::Capability::LAND_AVAILABLE,
+            Vehicle::Capability::TAKEOFF_AVAILABLE,
+            Vehicle::Capability::CAMERA_TRIGGER_AVAILABLE,
+            Vehicle::Capability::PAUSE_MISSION_AVAILABLE,
+            Vehicle::Capability::RESUME_MISSION_AVAILABLE,
+            Vehicle::Capability::EMERGENCY_LAND_AVAILABLE),
             stream,
             peer_addr,
             mission_dump_path,
@@ -130,7 +130,11 @@ Ardrone_vehicle_manager::Start_detection(Detection_ctx::Ptr ctx)
 		Detection_ended(ctx);
 	} else {
 		/* Wait for some data from Mavlink stream to make sure something is there. */
-		ctx->mav_waiter = ctx->mav_stream->Read(16, 16,
+	    /* max_read must be the largest possible mavlink packet here
+	     * otherwise the read fails on windows.*/
+	    ctx->mav_waiter = ctx->mav_stream->Read(
+	            ugcs::vsm::mavlink::MAX_MAVLINK_PACKET_SIZE,
+	            16,
 				Make_read_callback(
 						&Ardrone_vehicle_manager::On_mavlink_read,
 						this,

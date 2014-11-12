@@ -10,8 +10,6 @@ const ugcs::vsm::Mavlink_demuxer::System_id Mavlink_vehicle::VSM_SYSTEM_ID = 255
 /* Ardrone uses only this value in ACK messages. */
 const ugcs::vsm::Mavlink_demuxer::Component_id Mavlink_vehicle::VSM_COMPONENT_ID = 0;
 
-constexpr std::chrono::milliseconds Ardrone_vehicle::Emergeny_land::RETRY_DELAY;
-
 using namespace ugcs::vsm;
 
 void
@@ -44,14 +42,17 @@ Ardrone_vehicle::Handle_vehicle_request(Vehicle_command_request::Handle request)
 {
     ASSERT(!vehicle_command.vehicle_command_request);
 
-    if (request->Get_type() == Vehicle_command::Type::MANUAL_MODE ||
-        request->Get_type() == Vehicle_command::Type::AUTO_MODE) {
+    if (request->Get_type() == Vehicle_command::Type::PAUSE_MISSION ||
+        request->Get_type() == Vehicle_command::Type::RESUME_MISSION) {
 
         mode_switch.Disable();
         mode_switch.Enable(request);
     } else if (request->Get_type() == Vehicle_command::Type::EMERGENCY_LAND) {
-    	emergency_land.Disable();
-    	emergency_land.Enable(request, drone_addr);
+        emergency_land.Disable();
+        emergency_land.Enable(request, drone_addr);
+    } else if (request->Get_type() == Vehicle_command::Type::CAMERA_TRIGGER) {
+        camera_trigger.Disable();
+        camera_trigger.Enable(request, drone_addr);
     } else {
         vehicle_command.Disable();
         vehicle_command.Enable(request);
@@ -63,30 +64,29 @@ Ardrone_vehicle::Mode_switch::Enable(ugcs::vsm::Vehicle_command_request::Handle 
 {
     this->request = request;
     num_attempts = 0;
-    if (request->Get_type() == Vehicle_command::Type::AUTO_MODE) {
+    if (request->Get_type() == Vehicle_command::Type::RESUME_MISSION) {
         target_mode = Sys_status::Control_mode::AUTO;
     } else {
         target_mode = Sys_status::Control_mode::MANUAL;
     }
-    Toggle_mode();
 }
 
 void
 Ardrone_vehicle::Mode_switch::Toggle_mode()
 {
-    if (current_mode == target_mode) {
-        if (request) {
-            request = Vehicle_request::Result::OK;
-        }
+    if (!request) {
         return;
     }
-    if (request) {
-        num_attempts++;
-        if (num_attempts > MAX_ATTEMPTS) {
-            request = Vehicle_request::Result::NOK;
-        }
-        /* Still continue requests sending. */
+    if (current_mode == target_mode) {
+        request = Vehicle_request::Result::OK;
+        return;
     }
+    num_attempts++;
+    if (num_attempts > MAX_ATTEMPTS) {
+        request = Vehicle_request::Result::NOK;
+        return;
+    }
+    /* Still continue requests sending. */
     mavlink::Pld_command_long cmd;
     Fill_target_ids(cmd);
     cmd->command = mavlink::MAV_CMD::MAV_CMD_OVERRIDE_GOTO;
@@ -205,8 +205,35 @@ Ardrone_vehicle::Process_heartbeat(
         Sys_status::Control_mode::MANUAL;
     mode_switch.current_mode = control_mode;
     Set_system_status(Sys_status(true, true, control_mode, state, std::chrono::seconds(0)));
+    if (state == Sys_status::State::ARMED) {
+        Set_capability_states({
+            Vehicle::Capability_state::LAND_ENABLED,
+            Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED,
+            Vehicle::Capability_state::PAUSE_MISSION_ENABLED,
+            Vehicle::Capability_state::RESUME_MISSION_ENABLED,
+            Vehicle::Capability_state::EMERGENCY_LAND_ENABLED});
+    } else {
+        Set_capability_states({
+            Vehicle::Capability_state::TAKEOFF_ENABLED,
+            Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED});
+    }
     mode_switch.Toggle_mode();
 }
+
+size_t
+Ardrone_vehicle::Get_next_at_seq()
+{
+    return current_at_seq++;
+}
+
+constexpr float Ardrone_vehicle::Task_upload::INVALID_ELEVATION;
+
+Ardrone_vehicle::Task_upload::Task_upload(Ardrone_vehicle& v):
+Activity(v),
+ardrone_vehicle(v)
+{
+
+};
 
 void
 Ardrone_vehicle::Task_upload::Enable(
@@ -224,6 +251,7 @@ Ardrone_vehicle::Task_upload::Enable(
         switch ((*iter)->Get_type()) {
         case Action::Type::MOVE:
         case Action::Type::LANDING:
+        case Action::Type::TAKEOFF:
             iter++;
             continue;
         default:
@@ -232,34 +260,51 @@ Ardrone_vehicle::Task_upload::Enable(
         }
         iter = request->actions.erase(iter);
     }
+
     this->request = request;
 
-    if (!Calculate_launch_elevation()) {
-        VEHICLE_LOG_ERR(vehicle, "Unable to calculate launch elevation.");
-        Disable();
-    } else {
-        Prepare_task();
-        vehicle.mission_upload.Disable();
-        vehicle.mission_upload.mission_items = std::move(prepared_actions);
-        vehicle.mission_upload.Set_next_action(
-                Activity::Make_next_action(
-                        &Task_upload::Mission_uploaded,
-                        this));
-        vehicle.mission_upload.Enable();
-    }
+    launch_elevation = request->Get_takeoff_altitude();
+    Calculate_max_altitude();
+    Prepare_task();
+    vehicle.mission_upload.Disable();
+    vehicle.mission_upload.mission_items = std::move(prepared_actions);
+    vehicle.mission_upload.Set_next_action(
+            Activity::Make_next_action(
+                    &Task_upload::Mission_uploaded,
+                    this));
+    vehicle.mission_upload.Enable();
 }
 
 void
 Ardrone_vehicle::Task_upload::Mission_uploaded(bool success)
 {
-    if (!success) {
-        VEHICLE_LOG_INF(vehicle, "Mission upload to vehicle failed, failing vehicle request.");
+    if (success) {
+        ardrone_vehicle.set_max_altitude.Disable();
+        ardrone_vehicle.set_max_altitude.Set_altitude(max_altitude - launch_elevation);
+        ardrone_vehicle.set_max_altitude.Set_next_action(
+                Activity::Make_next_action(
+                        &Task_upload::Max_altitude_set,
+                        this));
+        ardrone_vehicle.set_max_altitude.Enable(
+                ugcs::vsm::Vehicle_command_request::Handle(),
+                ardrone_vehicle.drone_addr);
+    } else {
+        VEHICLE_LOG_INF(vehicle, "Mission upload failed, failing vehicle request.");
         request = Vehicle_request::Result::NOK;
         Disable();
-        return;
     }
-    /* Everything is OK. */
-    request = Vehicle_request::Result::OK;
+}
+
+void
+Ardrone_vehicle::Task_upload::Max_altitude_set(bool success)
+{
+    if (success) {
+        VEHICLE_LOG_INF(vehicle, "Max altitude set to %3.3f", max_altitude - launch_elevation);
+        request = Vehicle_request::Result::OK;
+    } else {
+        VEHICLE_LOG_INF(vehicle, "Failed to set max altitude.");
+        request = Vehicle_request::Result::NOK;
+    }
     Disable();
 }
 
@@ -298,30 +343,37 @@ Ardrone_vehicle::Task_upload::On_disable()
     if (request) {
         request = Vehicle_request::Result::NOK;
     }
-    vehicle.write_parameters.Disable();
     vehicle.mission_upload.Disable();
     prepared_actions.clear();
     task_attributes.clear();
 }
 
-bool
-Ardrone_vehicle::Task_upload::Calculate_launch_elevation()
+void
+Ardrone_vehicle::Task_upload::Calculate_max_altitude()
 {
+    max_altitude = launch_elevation;
     for (auto& action: request->actions) {
-        /* The first move or takeoff action. */
-        if (action->Get_type() == Action::Type::MOVE) {
-            Move_action::Ptr move = action->Get_action<Action::Type::MOVE>();
-            launch_elevation = move->elevation;
-            return true;
+        double altitude = INVALID_ELEVATION;
+        switch (action->Get_type()) {
+        case Action::Type::MOVE:
+            altitude = action->Get_action<Action::Type::MOVE>()->position.Get_geodetic().altitude;
+            break;
+        case Action::Type::TAKEOFF:
+            altitude = action->Get_action<Action::Type::TAKEOFF>()->position.Get_geodetic().altitude;
+            break;
+        case Action::Type::LANDING:
+            altitude = action->Get_action<Action::Type::LANDING>()->position.Get_geodetic().altitude;
+            break;
+        default:
+            continue;
         }
-        /* Or first takeoff. */
-        if (action->Get_type() == Action::Type::TAKEOFF) {
-            Takeoff_action::Ptr takeoff = action->Get_action<Action::Type::TAKEOFF>();
-            launch_elevation = takeoff->elevation;
-            return true;
+        if (altitude < launch_elevation) {
+            VEHICLE_LOG_ERR(vehicle, "Waypoint altitude %f is below launch elevation %f", altitude, launch_elevation);
+        }
+        if (max_altitude < altitude) {
+            max_altitude = altitude;
         }
     }
-    return false;
 }
 
 void
@@ -416,9 +468,7 @@ Ardrone_vehicle::Task_upload::Prepare_payload_steering(Action::Ptr&)
 void
 Ardrone_vehicle::Task_upload::Prepare_takeoff(Action::Ptr& action)
 {
-    /* Ardupilot does not fly to the takeoff position after takeoff
-     * is done. Add explicit waypoint after the takeoff command with
-     * target coordinates.
+    /* Add takeoff command as explicit waypoint.
      */
     auto takeoff = action->Get_action<Action::Type::TAKEOFF>();
     auto explicit_wp = Move_action::Create(
@@ -429,12 +479,6 @@ Ardrone_vehicle::Task_upload::Prepare_takeoff(Action::Ptr& action)
             takeoff->heading,
             takeoff->elevation
     );
-
-    mavlink::Pld_mission_item::Ptr mi = mavlink::Pld_mission_item::Create();
-    (*mi)->command = mavlink::MAV_CMD::MAV_CMD_NAV_TAKEOFF;
-    (*mi)->param1 = 0; /* No data for pitch. */
-    Fill_mavlink_mission_item_coords(*mi, takeoff->position.Get_geodetic(), takeoff->heading);
-    Add_mission_item(mi);
     Prepare_action(explicit_wp);
 }
 
@@ -687,14 +731,23 @@ Ardrone_vehicle::Task_upload::Build_wp_mission_item(Action::Ptr& action)
     return mi;
 }
 
+Ardrone_vehicle::At_command::At_command(Ardrone_vehicle& v, size_t retries, size_t delay_ms):
+Activity(v),
+retries(retries),
+delay(std::chrono::milliseconds(delay_ms)),
+ardrone_vehicle(v)
+{
+
+};
+
 void
-Ardrone_vehicle::Emergeny_land::Enable(
+Ardrone_vehicle::At_command::Enable(
 		ugcs::vsm::Vehicle_command_request::Handle request,
 		ugcs::vsm::Socket_address::Ptr drone_addr)
 {
 	this->request = request;
-	attempts_left = RETRIES;
-	current_seq = 1;
+
+	attempts_left = retries + 1;
 
 	at_addr = Socket_address::Create(drone_addr->Get_name_as_c_str(),
 			std::to_string(AT_PORT));
@@ -704,20 +757,22 @@ Ardrone_vehicle::Emergeny_land::Enable(
 			Socket_address::Create("0.0.0.0", std::to_string(AT_PORT)),
 				Make_setter(udp_stream, result));
 	if (result != Io_result::OK) {
+        Call_next_action(false);
 		Disable();
 		return;
 	}
-	Send_command();
-	timer = Timer_processor::Get_instance()->Create_timer(
-			RETRY_DELAY,
-			Make_callback(
-					&Ardrone_vehicle::Emergeny_land::Send_command,
-					this),
-					vehicle.Get_completion_ctx());
+	if (Send_command()) {
+        timer = Timer_processor::Get_instance()->Create_timer(
+                delay,
+                Make_callback(
+                        &Ardrone_vehicle::At_command::Send_command,
+                        this),
+                        vehicle.Get_completion_ctx());
+	}
 }
 
 void
-Ardrone_vehicle::Emergeny_land::On_disable()
+Ardrone_vehicle::At_command::On_disable()
 {
 	if (timer) {
 		timer->Cancel();
@@ -729,28 +784,82 @@ Ardrone_vehicle::Emergeny_land::On_disable()
 	udp_stream = nullptr;
 }
 
-bool
-Ardrone_vehicle::Emergeny_land::Send_command()
+Io_buffer::Ptr
+Ardrone_vehicle::At_command::Prepare_command()
 {
-	if (!attempts_left--) {
-		request = Vehicle_request::Result::OK;
-		Disable();
-		return false;
-	}
-
-	uint32_t cmd = 1 << 18 | 1 << 20 | 1 << 22 | 1 << 24 | 1 << 28 | 1 << 8 /* Emerg! */;
-
-	Io_result result;
-	udp_stream->Write_to(
-			Io_buffer::Create(
-					std::string("AT*REF=") +
-					std::to_string(current_seq++) +
-					"," +
-					std::to_string(cmd) +
-					"\r"),
-			at_addr,
-			Make_setter(result));
-
-	return true;
+    return Io_buffer::Create();
 }
 
+bool
+Ardrone_vehicle::At_command::Send_command()
+{
+    Io_result result;
+    udp_stream->Write_to(
+            Prepare_command(),
+            at_addr,
+            Make_setter(result));
+    attempts_left--;
+    if (result == Io_result::OK) {
+        if (attempts_left == 0) {
+            if (request) {
+                request = Vehicle_request::Result::OK;
+            }
+            Call_next_action(true);
+            Disable();
+            return false;
+        }
+        return true;
+    } else {
+        if (request) {
+            request = Vehicle_request::Result::NOK;
+        }
+        Call_next_action(false);
+        Disable();
+        return false;
+    }
+}
+
+Io_buffer::Ptr
+Ardrone_vehicle::Emergeny_land::Prepare_command()
+{
+    uint32_t cmd = 1 << 18 | 1 << 20 | 1 << 22 | 1 << 24 | 1 << 28 | 1 << 8 /* Emerg! */;
+    return Io_buffer::Create(
+            std::string("AT*REF=") +
+            std::to_string(ardrone_vehicle.Get_next_at_seq()) +
+            "," +
+            std::to_string(cmd | 256) +
+            "\r");
+}
+
+Io_buffer::Ptr
+Ardrone_vehicle::Camera_trigger::Prepare_command()
+{
+    std::time_t t = std::time(NULL);
+    char mbstr[20];
+    std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%H%M%S", std::localtime(&t));
+
+    return Io_buffer::Create(
+            std::string("AT*CONFIG=") +
+            std::to_string(ardrone_vehicle.Get_next_at_seq()) +
+            "," +
+            "\"userbox:userbox_cmd\",\"2,0,0," +
+            mbstr +
+            "\r");
+}
+
+Io_buffer::Ptr
+Ardrone_vehicle::Set_max_altitude::Prepare_command()
+{
+    return Io_buffer::Create(
+            std::string("AT*CONFIG=") +
+            std::to_string(ardrone_vehicle.Get_next_at_seq()) +
+            ",\"control:altitude_max\",\"" +
+            std::to_string(altitude) +
+            "\"\r");
+}
+
+void
+Ardrone_vehicle::Set_max_altitude::Set_altitude(double alt)
+{
+    altitude = static_cast<int>(alt * 1000);
+}
