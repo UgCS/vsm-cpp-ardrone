@@ -19,8 +19,7 @@ Ardrone_vehicle_manager::Ardrone_vehicle_manager() :
 Mavlink_vehicle_manager(
         "Ardrone",
         "vehicle.ardrone",
-        mavlink::Extension::Get(),
-        ugcs::vsm::mavlink::MAX_MAVLINK_PACKET_SIZE)
+        mavlink::Extension::Get())
 {
 
 }

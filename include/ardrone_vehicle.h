@@ -29,7 +29,7 @@ public:
                     system_id, component_id, type,
                     static_cast<ugcs::vsm::mavlink::MAV_AUTOPILOT>(ugcs::vsm::mavlink::ugcs::MAV_AUTOPILOT_AR_DRONE),
                     capabilities,
-                    stream, mission_dump_path, ugcs::vsm::mavlink::MAX_MAVLINK_PACKET_SIZE,
+                    stream, mission_dump_path,
                     std::forward<Args>(args)...),
             vehicle_command(*this),
             task_upload(*this),
