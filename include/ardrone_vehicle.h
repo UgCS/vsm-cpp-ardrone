@@ -351,6 +351,12 @@ private:
      */
     constexpr static double ACCEPTANCE_RADIUS_MIN = 1;
 
+    /** current vehicle mode in MAV_MODE_FLAG syntax. */
+    int current_vehicle_mode = 0;
+
+    /** current vehicle mode in MAV_MODE_FLAG syntax. */
+    int current_vehicle_custom_mode = 0;
+
     /** Process heartbeat message by setting system status according to it. */
     virtual void
     Process_heartbeat(

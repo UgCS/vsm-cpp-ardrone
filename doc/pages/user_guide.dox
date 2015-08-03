@@ -103,11 +103,13 @@ Flight plan element / action | Support | Notes
 -----------------------------|---------|------
 Camera control | No  | |
 Camera trigger | No  | |
-Heading        | No  | |
+Yaw            | Yes | |
 Land           | Yes | |
 Panorama       | No  | |
 Takeoff        | Yes | |
 Wait           | Yes | |
+Camera by time     | No  | |
+Camera by distance | No  | |
 
 Please carefully check your flight plan for maximum distance from  ground
 station. It is worth not to fly far (maximum 30-50 meters) from a GS because the
@@ -139,6 +141,19 @@ TAKEOFF        |  Yes     |  Takeoff and start mission execution. |
 LAND           |  Yes     |  |
 EMERGENCYLAND  |  Yes     |  Beware! Drone will fall down immediately. |
 
+@section commands_visibility Command visibility
+UGCS Client shows command buttons in different shades. Highlighted buttons suggest recommended commands, depending on vehicle current state. You can always press all buttons regardless of shade.
+
+__Command visibility:__
+State		| Button highlighted | Button shaded |
+------------|--------------------|---------------
+Armed		| LAND, EMERGENCYLAND, HOLD, CONTINUE | TAKEOFF, Camera trigger |
+Disarmed	| TAKEOFF, Camera trigger, CONTINUE, HOLD | LAND, EMERGENCYLAND |
+
+__Armed state inconsistency:__
+@note Sometimes ArDrone will report itself as "Armed" even though it sits on the ground with motors off.
+It can happen after "LAND" command issued from the client. This is a flaw in ArDrone firmware and can be ignored. The state returns to "Disarmed" after a power cycle.
+
 @section telemetry_info Telemetry information specifics
 
 Nothing specific.
@@ -163,7 +178,7 @@ Configuration file location:
 
 - <b>On Microsoft Windows:</b>
 
-         C:\Program Files (x86)\UgCS\vsm-ardrone\vsm-ardrone.conf
+         C:\Program Files (x86)\UgCS\bin\vsm-ardrone.conf
 
 - <b>On GNU/Linux:</b>
 

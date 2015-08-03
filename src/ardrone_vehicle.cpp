@@ -194,8 +194,9 @@ Ardrone_vehicle::Process_heartbeat(
     ugcs::vsm::mavlink::Message<ugcs::vsm::mavlink::MESSAGE_ID::HEARTBEAT>::Ptr message)
 {
     int mode = message->payload->base_mode.Get();
+    int custom_mode = message->payload->custom_mode.Get();
 
-    Sys_status::State state =
+    Sys_status::State armed_state =
         mode & mavlink::MAV_MODE_FLAG_MANUAL_INPUT_ENABLED ?
         Sys_status::State::ARMED :
         Sys_status::State::DISARMED;
@@ -203,20 +204,41 @@ Ardrone_vehicle::Process_heartbeat(
         mode & mavlink::MAV_MODE_FLAG_GUIDED_ENABLED ?
         Sys_status::Control_mode::AUTO :
         Sys_status::Control_mode::MANUAL;
-    mode_switch.current_mode = control_mode;
-    Set_system_status(Sys_status(true, true, control_mode, state, std::chrono::seconds(0)));
-    if (state == Sys_status::State::ARMED) {
-        Set_capability_states({
-            Vehicle::Capability_state::LAND_ENABLED,
-            Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED,
-            Vehicle::Capability_state::PAUSE_MISSION_ENABLED,
-            Vehicle::Capability_state::RESUME_MISSION_ENABLED,
-            Vehicle::Capability_state::EMERGENCY_LAND_ENABLED});
+
+    if (armed_state == Sys_status::State::ARMED) {
+        if (control_mode == Sys_status::Control_mode::AUTO) {
+            Set_capability_states({
+                Vehicle::Capability_state::LAND_ENABLED,
+                Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED,
+                Vehicle::Capability_state::PAUSE_MISSION_ENABLED,
+                Vehicle::Capability_state::EMERGENCY_LAND_ENABLED});
+        } else {
+            Set_capability_states({
+                Vehicle::Capability_state::LAND_ENABLED,
+                Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED,
+                Vehicle::Capability_state::RESUME_MISSION_ENABLED,
+                Vehicle::Capability_state::EMERGENCY_LAND_ENABLED});
+        }
     } else {
         Set_capability_states({
             Vehicle::Capability_state::TAKEOFF_ENABLED,
             Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED});
     }
+
+    if (current_vehicle_custom_mode != custom_mode) {
+        VEHICLE_LOG_DBG(*this, "Vehicle custom_mode changed from: %d to: %d", current_vehicle_custom_mode, custom_mode);
+        current_vehicle_custom_mode = custom_mode;
+    }
+
+    if (current_vehicle_mode != mode) {
+        VEHICLE_LOG_DBG(*this, "Vehicle mode changed from: %d to: %d", current_vehicle_mode, mode);
+        current_vehicle_mode = mode;
+    }
+
+    mode_switch.current_mode = control_mode;
+
+    Set_system_status(Sys_status(true, true, control_mode, armed_state, std::chrono::seconds(0)));
+
     mode_switch.Toggle_mode();
 }
 
@@ -252,6 +274,8 @@ Ardrone_vehicle::Task_upload::Enable(
         case Action::Type::MOVE:
         case Action::Type::LANDING:
         case Action::Type::TAKEOFF:
+        case Action::Type::WAIT:
+        case Action::Type::HEADING:
             iter++;
             continue;
         default:
@@ -426,6 +450,10 @@ Ardrone_vehicle::Task_upload::Prepare_action(Action::Ptr action)
         VSM_EXCEPTION(Internal_error_exception, "CAMERA_TRIGGER action not supported.");
     case Action::Type::TASK_ATTRIBUTES:
         VSM_EXCEPTION(Internal_error_exception, "TASK_ATTRIBUTES action not supported.");
+    case Action::Type::CAMERA_SERIES_BY_TIME:
+        VSM_EXCEPTION(Internal_error_exception, "CAMERA_SERIES_BY_TIME action not supported.");
+    case Action::Type::CAMERA_SERIES_BY_DISTANCE:
+        VSM_EXCEPTION(Internal_error_exception, "CAMERA_SERIES_BY_DISTANCE action not supported.");
     }
     VSM_EXCEPTION(Internal_error_exception, "Unsupported action [%s]",
             action->Get_name().c_str());

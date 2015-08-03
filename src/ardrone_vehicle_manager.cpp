@@ -277,6 +277,7 @@ Ardrone_vehicle_manager::Try_finish_detecton(Detection_ctx::Ptr ctx)
 				0,
 				ctx->drone_addr,
 				mav_stream,
+				false,
 				ctx->name,
 				ctx->ssid);
 	}
