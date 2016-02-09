@@ -67,7 +67,6 @@ Ardrone_vehicle_manager::Create_mavlink_vehicle(
             Vehicle::Capabilities(
             Vehicle::Capability::LAND_AVAILABLE,
             Vehicle::Capability::TAKEOFF_AVAILABLE,
-            Vehicle::Capability::CAMERA_TRIGGER_AVAILABLE,
             Vehicle::Capability::PAUSE_MISSION_AVAILABLE,
             Vehicle::Capability::RESUME_MISSION_AVAILABLE,
             Vehicle::Capability::EMERGENCY_LAND_AVAILABLE),

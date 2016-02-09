@@ -1,6 +1,6 @@
 /**
 
-@page vsm_user_guide AR.Drone VSM User Guide
+@page vsm_user_guide Connecting AR.Drone to UgCS
 
 @image latex ugcs-logo.png "" width=3cm
 @image latex main-vsm-logo.png "" width=4cm
@@ -37,14 +37,16 @@ access point (typically named "ardrone2_XXXXXX") to which your PC should connect
  try to connect your iPad or iPhone to ArDrone WiFi.
 
 
-3. Once the drone is connected it should appear in vehicles list.
-Both Uplink and Downlink connections should be available. Press
-_Gain control_ and _Edit_ to select corresponding vehicle profile and change the default
-vehicle name to be convenient for you:
+3. As soon as uplink and downlink connection is established, the vehicle should
+appear in the active vehicles list in main (map) view. Open _Vehicles_ window
+from main menu and choose the corresponding vehicle for editing by clicking on
+the menu item and selecting _Edit_ button. Now you can select the vehicle
+profile and change the default vehicle name to be convenient for you:
 @image html new-ardrone-vehicle.png "New AR.Drone vehicle"
 @image latex new-ardrone-vehicle.png "New AR.Drone vehicle" width=15cm
 Vehicle profile needs to be assigned to allow mission planning with this vehicle.
-Image needs to be assigned to see vehicle location on the map.
+Vehicle avatar should be assigned in vehicle profile to properly see the vehicle
+location on map.
 
 @subsection multiple_drones Multiple drones connection
 
@@ -59,8 +61,9 @@ running on it:
 @image html multiple-ardrones.png "Multiple AR.Drone vehicles connection"
 @image latex multiple-ardrones.png "Multiple AR.Drone vehicles connection" width=15cm
 
-In this case it is necessary to add addresses of all computers to U[g]CS VSM
-configuration:
+In this case Automatic VSM Discovery protocol should discover all vehicles that are
+connected to PCs within current local area network. Some times it is necessary trough
+to add addresses of all computers to U[g]CS VSM configuration:
 
 @image html new-ardrone-vsm.png "Adding AR.Drone VSM"
 @image latex new-ardrone-vsm.png "Adding AR.Drone VSM" width=15cm
@@ -132,14 +135,18 @@ elevation at base location. It is not able to fly below starting point.
 @section command_execution_specifics Command execution specifics
 Command        | Support  | Notes
 ---------------|----------|---------
-ARM            |  No      |  |
-DISARM         |  No      |  |
-CONTINUE       |  Yes     |  Continue mission execution if previously paused by HOLD.  |
-HOLD           |  Yes     |  Pause mission execution. The drone will loiter at its current position. It is possible to disconnect GS PC and connect by a native application for manual control. |
-RETURNHOME     |  No      |  |
-TAKEOFF        |  Yes     |  Takeoff and start mission execution. |
-LAND           |  Yes     |  |
-EMERGENCYLAND  |  Yes     |  Beware! Drone will fall down immediately. |
+ARM            |  No      | |
+DISARM         |  No      | |
+AUTOMODE       |  No      | |
+MANUALMODE     |  No      | |
+CLICK & GO     |  No      | |
+HOLD           |  Yes     | Pause mission execution. The drone will loiter at its current position. It is possible to disconnect GS PC and connect by a native application for manual control. |
+CONTINUE       |  Yes     | Continue mission execution if previously paused by HOLD.  |
+RETURNHOME     |  No      | |
+TAKEOFF        |  Yes     | Takeoff and start mission execution. It there is no mission on the drone it stays on the ground. |
+LAND           |  Yes     | |
+EMERGENCYLAND  |  Yes     | Beware! Drone will fall down immediately. |
+CAMERA_TRIGGER |  Yes     | Trigger camera shutter|
 
 @section commands_visibility Command visibility
 UGCS Client shows command buttons in different shades. Highlighted buttons suggest recommended commands, depending on vehicle current state. You can always press all buttons regardless of shade.
@@ -147,8 +154,8 @@ UGCS Client shows command buttons in different shades. Highlighted buttons sugge
 __Command visibility:__
 State		| Button highlighted | Button shaded |
 ------------|--------------------|---------------
-Armed		| LAND, EMERGENCYLAND, HOLD, CONTINUE | TAKEOFF, Camera trigger |
-Disarmed	| TAKEOFF, Camera trigger, CONTINUE, HOLD | LAND, EMERGENCYLAND |
+Armed		| LAND, EMERGENCYLAND, HOLD, CONTINUE | TAKEOFF |
+Disarmed	| TAKEOFF, CONTINUE, HOLD | LAND, EMERGENCYLAND |
 
 __Armed state inconsistency:__
 @note Sometimes ArDrone will report itself as "Armed" even though it sits on the ground with motors off.

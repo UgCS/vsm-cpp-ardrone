@@ -454,6 +454,8 @@ Ardrone_vehicle::Task_upload::Prepare_action(Action::Ptr action)
         VSM_EXCEPTION(Internal_error_exception, "CAMERA_SERIES_BY_TIME action not supported.");
     case Action::Type::CAMERA_SERIES_BY_DISTANCE:
         VSM_EXCEPTION(Internal_error_exception, "CAMERA_SERIES_BY_DISTANCE action not supported.");
+    case Action::Type::SET_PARAMETER:
+        VSM_EXCEPTION(Internal_error_exception, "SET_PARAMETER action not supported.");
     }
     VSM_EXCEPTION(Internal_error_exception, "Unsupported action [%s]",
             action->Get_name().c_str());
