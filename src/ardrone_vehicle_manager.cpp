@@ -66,7 +66,7 @@ Ardrone_vehicle_manager::Create_mavlink_vehicle(
             type,
             Vehicle::Capabilities(
             Vehicle::Capability::LAND_AVAILABLE,
-            Vehicle::Capability::TAKEOFF_AVAILABLE,
+            Vehicle::Capability::AUTO_MODE_AVAILABLE,
             Vehicle::Capability::PAUSE_MISSION_AVAILABLE,
             Vehicle::Capability::RESUME_MISSION_AVAILABLE,
             Vehicle::Capability::EMERGENCY_LAND_AVAILABLE),
@@ -131,7 +131,7 @@ Ardrone_vehicle_manager::Start_detection(Detection_ctx::Ptr ctx)
 	    /* max_read must be the largest possible mavlink packet here
 	     * otherwise the read fails on windows.*/
 	    ctx->mav_waiter = ctx->mav_stream->Read(
-	            ugcs::vsm::mavlink::MAX_MAVLINK_PACKET_SIZE,
+	            ugcs::vsm::MIN_UDP_PAYLOAD_SIZE_TO_READ,
 	            16,
 				Make_read_callback(
 						&Ardrone_vehicle_manager::On_mavlink_read,
@@ -276,6 +276,7 @@ Ardrone_vehicle_manager::Try_finish_detecton(Detection_ctx::Ptr ctx)
 				0,
 				ctx->drone_addr,
 				mav_stream,
+				ugcs::vsm::mavlink::MAV_AUTOPILOT_GENERIC,
 				false,
 				ctx->name,
 				ctx->ssid);

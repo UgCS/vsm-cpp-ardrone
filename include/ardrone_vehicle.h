@@ -38,17 +38,14 @@ public:
             camera_trigger(*this),
             set_max_altitude(*this, 2, 250),
             drone_addr(drone_addr)
-    {}
+    {
+        autopilot_type = "ardrone";
+        frame_type = "ardrone";
+    }
 
     /** UCS has sent a task for a vehicle. */
     virtual void
     Handle_vehicle_request(ugcs::vsm::Vehicle_task_request::Handle request) override;
-
-    /**
-     * UCS requesting to clear up all missions on a vehicle.
-     */
-    virtual void
-    Handle_vehicle_request(ugcs::vsm::Vehicle_clear_all_missions_request::Handle request) override;
 
     /**
      * UCS requesting command execution on a vehicle.
@@ -179,11 +176,11 @@ private:
 
         /** Mission upload handler. */
         void
-        Mission_uploaded(bool success);
+        Mission_uploaded(bool success, std::string error_msg);
 
         /** Mission upload complete handler. */
         void
-        Max_altitude_set(bool success);
+        Max_altitude_set(bool success, std::string error_msg);
 
         /**
          * Fill coordinates into Mavlink message based on ugcs::vsm::Geodetic_tuple and

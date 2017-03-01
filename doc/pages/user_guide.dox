@@ -12,7 +12,7 @@ See @ref vsm_disclaimer.
 
 Only AR.Drone version 2.0 is supported.
 
-Please follow these steps to connect an AR.Drone vehicle to the U[g]CS:
+Please follow these steps to connect an AR.Drone vehicle to the UgCS:
 
 1. AR.Drone should have Flight Recorder installed. See manufacturer manual for
 details as well as official web-site: http://ardrone2.parrot.com/
@@ -55,7 +55,7 @@ not possible to connect multiple AR.Drone vehicles to the same computer without
 doing non-standard vehicle reconfiguration. Community written instructions about
 how to do it exist, but they are not officially supported by AR.Drone
 manufacturer Parrot. The easiest way how to connect multiple AR.Drone vehicles
-to U[g]CS is to connect each vehicle to its own computer with AR.Drone VSM
+to UgCS is to connect each vehicle to its own computer with AR.Drone VSM
 running on it:
 
 @image html multiple-ardrones.png "Multiple AR.Drone vehicles connection"
@@ -63,12 +63,12 @@ running on it:
 
 In this case Automatic VSM Discovery protocol should discover all vehicles that are
 connected to PCs within current local area network. Some times it is necessary trough
-to add addresses of all computers to U[g]CS VSM configuration:
+to add addresses of all computers to UgCS VSM configuration:
 
 @image html new-ardrone-vsm.png "Adding AR.Drone VSM"
 @image latex new-ardrone-vsm.png "Adding AR.Drone VSM" width=15cm
 
-AR.Drone vehicles in U[g]CS are identified by a MavLink ID which is also the
+AR.Drone vehicles in UgCS are identified by a MavLink ID which is also the
 same for all AR.Drone vehicles, thus does not allow to distinguish one vehicle
 from another. To overcome this problem, it is necessary to assign custom serial
 number for connected vehicle on each computer. That is, for example, AR.Drone on
@@ -137,16 +137,17 @@ Command        | Support  | Notes
 ---------------|----------|---------
 ARM            |  No      | |
 DISARM         |  No      | |
-AUTOMODE       |  No      | |
+AUTOMODE       |  Yes     | Takeoff and start mission execution. If there is no mission on the drone it stays on the ground. |
 MANUALMODE     |  No      | |
 CLICK & GO     |  No      | |
+JOYSTICK       |  No      | |
 HOLD           |  Yes     | Pause mission execution. The drone will loiter at its current position. It is possible to disconnect GS PC and connect by a native application for manual control. |
 CONTINUE       |  Yes     | Continue mission execution if previously paused by HOLD.  |
 RETURNHOME     |  No      | |
-TAKEOFF        |  Yes     | Takeoff and start mission execution. It there is no mission on the drone it stays on the ground. |
+TAKEOFF        |  No      | |
 LAND           |  Yes     | |
 EMERGENCYLAND  |  Yes     | Beware! Drone will fall down immediately. |
-CAMERA_TRIGGER |  Yes     | Trigger camera shutter|
+CAMERA_TRIGGER |  No      | Trigger camera shutter|
 
 @section commands_visibility Command visibility
 UGCS Client shows command buttons in different shades. Highlighted buttons suggest recommended commands, depending on vehicle current state. You can always press all buttons regardless of shade.
@@ -154,8 +155,8 @@ UGCS Client shows command buttons in different shades. Highlighted buttons sugge
 __Command visibility:__
 State		| Button highlighted | Button shaded |
 ------------|--------------------|---------------
-Armed		| LAND, EMERGENCYLAND, HOLD, CONTINUE | TAKEOFF |
-Disarmed	| TAKEOFF, CONTINUE, HOLD | LAND, EMERGENCYLAND |
+Armed		| LAND, EMERGENCYLAND, HOLD, CONTINUE | AUTO |
+Disarmed	| AUTO, CONTINUE, HOLD | LAND, EMERGENCYLAND |
 
 __Armed state inconsistency:__
 @note Sometimes ArDrone will report itself as "Armed" even though it sits on the ground with motors off.
@@ -168,12 +169,12 @@ Nothing specific.
 @section ardrone_video Video link
 
 The AR.Drone has on-board HD camera and broadcasts the video stream via Wi-Fi.
-To watch the video in U[g]CS you should add the video stream on the video
+To watch the video in UgCS you should add the video stream on the video
 configuration page. Use this URL:
 
         tcp://192.168.1.1:5555/
 
-Currently it is supported only for U[g]CS client running on the computer which
+Currently it is supported only for UgCS client running on the computer which
 has direct Wi-Fi connection to AR.Drone.
 
 @section config_file_parameters_section Configuration file
@@ -225,14 +226,14 @@ Optional.
 - @b Name: vehicle.ardrone.custom.[name].system_id = [system id]
 - @b Name: vehicle.ardrone.custom.[name].model_name = [model name]
 - @b Name: vehicle.ardrone.custom.[name].serial_number = [serial number]
-- @b Description: In U[g]CS each vehicle is identified by a unique combination of
+- @b Description: In UgCS each vehicle is identified by a unique combination of
 model name and serial number represented as text strings. By default, Ar.Drone
 vehicles are identified with a model name Ar.Drone and serial number equal with
 the Mavlink system id read from the vehicle. It can be overridden by these
 parameters, where [name] is an arbitrary vehicle name, [system id] is the
 original Mavlink system id which should be overridden, [model name] is a new
-model name to be visible to the U[g]CS, [serial number] is a new serial number to
-be visible to the U[g]CS.
+model name to be visible to the UgCS, [serial number] is a new serial number to
+be visible to the UgCS.
 - @b Example:
 
         vehicle.ardrone.custom.my_drone.system_id = 2

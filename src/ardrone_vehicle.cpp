@@ -18,23 +18,7 @@ Ardrone_vehicle::Handle_vehicle_request(Vehicle_task_request::Handle request)
     VEHICLE_LOG_INF((*this), "Starting to handle %zu tasks...", request->actions.size());
     ASSERT(!task_upload.request);
     task_upload.Disable();
-    clear_all_missions.Disable();
-    /* Mission upload will be done after all existing missions are cleared. */
-    clear_all_missions.Set_next_action(
-            Activity::Make_next_action(
-                    &Task_upload::Enable,
-                    &task_upload,
-                    request));
-    clear_all_missions.Enable(ugcs::vsm::Clear_all_missions());
-}
-
-void
-Ardrone_vehicle::Handle_vehicle_request(Vehicle_clear_all_missions_request::Handle request)
-{
-    ASSERT(!task_upload.request);
-    clear_all_missions.Disable();
-    /* Only clear. */
-    clear_all_missions.Enable(*request);
+    task_upload.Enable(true, request);
 }
 
 void
@@ -78,12 +62,12 @@ Ardrone_vehicle::Mode_switch::Toggle_mode()
         return;
     }
     if (current_mode == target_mode) {
-        request = Vehicle_request::Result::OK;
+        request.Succeed();
         return;
     }
     num_attempts++;
     if (num_attempts > MAX_ATTEMPTS) {
-        request = Vehicle_request::Result::NOK;
+        request.Fail("Max of %d attempts exceeded", MAX_ATTEMPTS);
         return;
     }
     /* Still continue requests sending. */
@@ -97,9 +81,7 @@ Ardrone_vehicle::Mode_switch::Toggle_mode()
 void
 Ardrone_vehicle::Mode_switch::On_disable()
 {
-    if (request) {
-        request = Vehicle_request::Result::NOK;
-    }
+    request.Fail();
 }
 
 bool
@@ -107,7 +89,7 @@ Ardrone_vehicle::Vehicle_command_act::Try()
 {
     if (!remaining_attempts--) {
         /* ArDrone does not send responses, so assume command is executed. */
-    	vehicle_command_request = Vehicle_request::Result::OK;
+    	vehicle_command_request.Succeed();
         Disable();
         return false;
     }
@@ -119,15 +101,13 @@ Ardrone_vehicle::Vehicle_command_act::Try()
     case Vehicle_command::Type::LAND:
         cmd->command = mavlink::MAV_CMD::MAV_CMD_NAV_LAND;
         break;
-    case Vehicle_command::Type::TAKEOFF:
+    case Vehicle_command::Type::AUTO_MODE:
         cmd->command = mavlink::MAV_CMD::MAV_CMD_NAV_TAKEOFF;
         break;
     default:
         Disable();
         return false;
     }
-
-
     Send_message(cmd);
     Schedule_timer();
     return false;
@@ -141,9 +121,10 @@ Ardrone_vehicle::Vehicle_command_act::On_command_ack(
             message->payload->result.Get());
 
     if (message->payload->result == mavlink::MAV_RESULT::MAV_RESULT_ACCEPTED) {
-        vehicle_command_request = Vehicle_request::Result::OK;
+        vehicle_command_request.Succeed();
     } else {
-        vehicle_command_request = Vehicle_request::Result::NOK;
+        auto p = message->payload->result.Get();
+        vehicle_command_request.Fail("Result: %d (%s)", p, Mav_result_to_string(p).c_str());
     }
     Disable();
 }
@@ -155,11 +136,16 @@ Ardrone_vehicle::Vehicle_command_act::Enable(
     this->vehicle_command_request = vehicle_command_request;
     remaining_attempts = ATTEMPTS;
 
-    Register_mavlink_handler<mavlink::MESSAGE_ID::COMMAND_ACK>(
+    try {
+        Register_mavlink_handler<mavlink::MESSAGE_ID::COMMAND_ACK>(
             &Vehicle_command_act::On_command_ack,
             this,
             Mavlink_demuxer::COMPONENT_ID_ANY);
-
+    } catch (const Mavlink_demuxer::Duplicate_handler& e) {
+        vehicle_command_request.Fail("Another command in progress");
+        Disable();
+        return;
+    }
     Try();
 }
 
@@ -172,9 +158,7 @@ Ardrone_vehicle::Vehicle_command_act::On_disable()
         timer->Cancel();
         timer = nullptr;
     }
-    if (vehicle_command_request) {
-        vehicle_command_request = Vehicle_request::Result::NOK;
-    }
+    vehicle_command_request.Fail("Command canceled");
 }
 
 void
@@ -221,7 +205,7 @@ Ardrone_vehicle::Process_heartbeat(
         }
     } else {
         Set_capability_states({
-            Vehicle::Capability_state::TAKEOFF_ENABLED,
+            Vehicle::Capability_state::AUTO_MODE_ENABLED,
             Vehicle::Capability_state::CAMERA_TRIGGER_ENABLED});
     }
 
@@ -264,7 +248,7 @@ Ardrone_vehicle::Task_upload::Enable(
 {
     if (!success) {
         VEHICLE_LOG_INF(vehicle, "Previous activity failed, failing also task upload.");
-        request = Vehicle_request::Result::NOK;
+        request.Fail("Previous activity failed");
         Disable();
         return;
     }
@@ -300,7 +284,7 @@ Ardrone_vehicle::Task_upload::Enable(
 }
 
 void
-Ardrone_vehicle::Task_upload::Mission_uploaded(bool success)
+Ardrone_vehicle::Task_upload::Mission_uploaded(bool success, std::string error_msg)
 {
     if (success) {
         ardrone_vehicle.set_max_altitude.Disable();
@@ -313,21 +297,27 @@ Ardrone_vehicle::Task_upload::Mission_uploaded(bool success)
                 ugcs::vsm::Vehicle_command_request::Handle(),
                 ardrone_vehicle.drone_addr);
     } else {
-        VEHICLE_LOG_INF(vehicle, "Mission upload failed, failing vehicle request.");
-        request = Vehicle_request::Result::NOK;
+        if (error_msg.size()) {
+            request.Fail(error_msg);
+        } else {
+            request.Fail("Route upload failed");
+        }
         Disable();
     }
 }
 
 void
-Ardrone_vehicle::Task_upload::Max_altitude_set(bool success)
+Ardrone_vehicle::Task_upload::Max_altitude_set(bool success, std::string error_msg)
 {
     if (success) {
         VEHICLE_LOG_INF(vehicle, "Max altitude set to %3.3f", max_altitude - launch_elevation);
-        request = Vehicle_request::Result::OK;
+        request.Succeed();
     } else {
-        VEHICLE_LOG_INF(vehicle, "Failed to set max altitude.");
-        request = Vehicle_request::Result::NOK;
+        if (error_msg.size()) {
+            request.Fail(error_msg);
+        } else {
+            request.Fail("Failed to set max altitude.");
+        }
     }
     Disable();
 }
@@ -364,9 +354,7 @@ Ardrone_vehicle::Task_upload::Fill_mavlink_mission_item_common(
 void
 Ardrone_vehicle::Task_upload::On_disable()
 {
-    if (request) {
-        request = Vehicle_request::Result::NOK;
-    }
+    request.Fail("Canceled");
     vehicle.mission_upload.Disable();
     prepared_actions.clear();
     task_attributes.clear();
@@ -545,25 +533,8 @@ Ardrone_vehicle::Task_upload::Prepare_change_speed(Action::Ptr& action)
     Change_speed_action::Ptr la = action->Get_action<Action::Type::CHANGE_SPEED>();
     mavlink::Pld_mission_item::Ptr mi = mavlink::Pld_mission_item::Create();
     (*mi)->command = mavlink::MAV_CMD::MAV_CMD_DO_CHANGE_SPEED;
-    /* XXX Most likely, this switch does not make much sense for ArDrone for now. */
-    switch (vehicle.Get_mav_type()) {
-    case mavlink::MAV_TYPE::MAV_TYPE_QUADROTOR:
-    case mavlink::MAV_TYPE::MAV_TYPE_HEXAROTOR:
-    case mavlink::MAV_TYPE::MAV_TYPE_OCTOROTOR:
-    case mavlink::MAV_TYPE::MAV_TYPE_TRICOPTER:
-        /* Copters use p1 as navigation speed always. */
-        (*mi)->param1 = la->speed;
-        (*mi)->param2 = 0; /* unused */
-        break;
-    case mavlink::MAV_TYPE::MAV_TYPE_GROUND_ROVER:
-    default:
-        /* Ground rover takes only airspeed into account, others seems to
-         * take both, but we have only airspeed from UCS, so use only air. */
-        (*mi)->param1 = 0; /* Airspeed. */
-        (*mi)->param2 = la->speed;
-        break;
-    }
-
+    (*mi)->param1 = hypot(la->speed, la->vertical_speed);
+    (*mi)->param2 = 0; /* unused */
     (*mi)->param3 = -1; /* Throttle no change. */
     Add_mission_item(mi);
 }
@@ -787,7 +758,7 @@ Ardrone_vehicle::At_command::Enable(
 			Socket_address::Create("0.0.0.0", std::to_string(AT_PORT)),
 				Make_setter(udp_stream, result));
 	if (result != Io_result::OK) {
-        Call_next_action(false);
+        Call_next_action(false, "Failed to bind udp port " + std::to_string(AT_PORT));
 		Disable();
 		return;
 	}
@@ -808,9 +779,7 @@ Ardrone_vehicle::At_command::On_disable()
 		timer->Cancel();
 		timer = nullptr;
 	}
-	if (request) {
-		request = Vehicle_request::Result::NOK;
-	}
+	request.Fail("Canceled");
 	udp_stream = nullptr;
 }
 
@@ -831,19 +800,15 @@ Ardrone_vehicle::At_command::Send_command()
     attempts_left--;
     if (result == Io_result::OK) {
         if (attempts_left == 0) {
-            if (request) {
-                request = Vehicle_request::Result::OK;
-            }
-            Call_next_action(true);
+            request.Succeed();
+            Call_next_action(true, "");
             Disable();
             return false;
         }
         return true;
     } else {
-        if (request) {
-            request = Vehicle_request::Result::NOK;
-        }
-        Call_next_action(false);
+        request.Fail("UDP write failed");
+        Call_next_action(false, "UDP write failed");
         Disable();
         return false;
     }
@@ -891,5 +856,5 @@ Ardrone_vehicle::Set_max_altitude::Prepare_command()
 void
 Ardrone_vehicle::Set_max_altitude::Set_altitude(double alt)
 {
-    altitude = static_cast<int>(alt * 1000);
+    altitude = static_cast<int>(lround(alt * 1000));
 }
